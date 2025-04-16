@@ -33,7 +33,7 @@ OA Coder is an Electron application that captures screenshots and leverages the 
     ```
     {
       "apiKey": "YOUR_OPENAI_API_KEY",
-      "model": "gpt-4o-mini"
+      "model": "anthropic/claude-3.7-sonnet"
     }
     ```
   - Note: If the model field is omitted, the application defaults to "gpt-4o-mini".

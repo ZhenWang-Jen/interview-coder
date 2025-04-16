@@ -1,6 +1,7 @@
-const { app, BrowserWindow, globalShortcut } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain } = require('electron');
 const path = require('path');
 const screenshot = require('screenshot-desktop');
+const sharp = require('sharp');
 const fs = require('fs');
 const { OpenAI } = require('openai');
 
@@ -17,7 +18,7 @@ try {
   // Set default model if not specified
   if (!config.model) {
     config.model = "gpt-4o-mini";
-    console.log("Model not specified in config, using default:", config.model);
+    console.log("Model not specified in config, using default: ", config.model);
   }
 } catch (err) {
   console.error("Error reading config:", err);
@@ -33,12 +34,6 @@ const openai = new OpenAI({
     "X-Title": "openrouter.ai", // Optional. Site title for rankings on openrouter.ai.
   },
 });
-
-// // Initialize OpenAI with DeepSeek endpoint
-// const openai = new OpenAI({
-//   baseURL: 'https://api.deepseek.com',
-//   apiKey: config.apiKey
-// });
 
 let mainWindow;
 let screenshots = [];
@@ -64,9 +59,19 @@ async function captureScreenshot() {
 
     const timestamp = Date.now();
     const imagePath = path.join(app.getPath('pictures'), `screenshot_${timestamp}.png`);
+    const resizedPath = path.join(app.getPath('pictures'), `screenshot_${timestamp}_resized.jpg`);
+
+    // Capture original screenshot
     await screenshot({ filename: imagePath });
 
-    const imageBuffer = fs.readFileSync(imagePath);
+    // Resize + compress using sharp (800px width, JPEG compression) due to API 30.000MB limit
+    await sharp(imagePath)
+      .resize({ width: 800 })
+      .jpeg({ quality: 80 }) // You can tweak quality if needed
+      .toFile(resizedPath);
+
+    // Read resized image
+    const imageBuffer = fs.readFileSync(resizedPath);
     const base64Image = imageBuffer.toString('base64');
 
     mainWindow.show();
@@ -113,7 +118,7 @@ async function processScreenshots() {
         Your tests should:
         - A few code dry run tests to prove your solution works.
         Your code solution should:
-        - Write clean, well-structured JavaScript code that solves the problem.
+        - Write clean, well-structured Python code that solves the problem.
         - Ensure the code includes proper naming conventions, clear logic, and error handling. 
         - Include any helper functions or utility methods.
         - Add meaningful comments to explain key parts of the code.  
@@ -165,23 +170,21 @@ async function processScreenshots() {
       });
     }
 
+    // Make the request
     const response = await openai.chat.completions.create({
-      model: "anthropic/claude-3.7-sonnet",
-      messages: messages
+      model: config.model,
+      messages: messages,
+      // max_tokens: 5000,
+      // temperature: 0.7
     });
-
-    // // Make the request
-    // const response = await openai.chat.completions.create({
-    //   model: config.model,
-    //   messages: messages,
-    //   max_tokens: 5000,
-    //   temperature: 0.7
-    // });
-    console.log('response', response.choices[0].message);
+    
+    if (response.error) {
+      console.error("Error in processScreenshots: ", response.error);
+    }
     // Send the text to the renderer
     mainWindow.webContents.send('analysis-result', response.choices[0].message.content);
   } catch (err) {
-    console.error("Error in processScreenshots:", err);
+    console.error("Error in processScreenshots: ", err);
     if (mainWindow.webContents) {
       mainWindow.webContents.send('error', err.message);
     }
@@ -305,4 +308,10 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }
+});
+
+ipcMain.on('adjust-height', (event, height) => {
+  if (!mainWindow) return;
+  const [width] = mainWindow.getSize();
+  mainWindow.setSize(width, height);
 });
